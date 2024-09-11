@@ -5,6 +5,7 @@ import { Handle } from './types.js';
 
 interface HandleInResponse {
   name: string;
+  hex: string;
   holder: string;
   resolved_addresses: { ada: string };
 }
@@ -49,6 +50,7 @@ const fetchHandles = async (
     ).json()) as HandleInResponse[];
     const data = result.map((handle) => ({
       name: handle.name,
+      hex: handle.hex,
       resolvedAddress: handle?.resolved_addresses?.ada || '',
     }));
     return Ok(data);

@@ -16,13 +16,12 @@ const API = new BlockFrostAPI({ projectId: blockfrostApiKey! });
 const resolveHandleAddress = async (
   handle: Handle
 ): Promise<ResolvedHandle> => {
-  const { name, resolvedAddress } = handle;
+  const { name, hex, resolvedAddress } = handle;
   try {
-    const data = await API.assetsAddresses(
-      `${HANDLE_POLICY_ID}${Buffer.from(name, 'utf8').toString('hex')}`
-    );
+    const data = await API.assetsAddresses(`${HANDLE_POLICY_ID}${hex}`);
     return {
       name,
+      hex,
       oldResolvedAddress: resolvedAddress,
       newResolvedAddress: data?.[0]?.address || '',
     };
