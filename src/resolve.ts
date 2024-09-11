@@ -1,8 +1,10 @@
 import { BlockFrostAPI } from '@blockfrost/blockfrost-js';
 import { config } from 'dotenv';
-import { convertError } from 'error/index.js';
 import pLimit from 'p-limit';
 import { Err, Ok, Result } from 'ts-res';
+
+import { convertError } from './error/index.js';
+import { Handle, ResolvedHandle } from './types.js';
 
 config();
 
@@ -12,15 +14,17 @@ const blockfrostApiKey = process.env.BLOCKFROST_API_KEY;
 const API = new BlockFrostAPI({ projectId: blockfrostApiKey! });
 
 const resolveHandleAddress = async (
-  name: string
-): Promise<{ name: string; address: string }> => {
+  handle: Handle
+): Promise<ResolvedHandle> => {
+  const { name, resolvedAddress } = handle;
   try {
     const data = await API.assetsAddresses(
       `${HANDLE_POLICY_ID}${Buffer.from(name, 'utf8').toString('hex')}`
     );
     return {
       name,
-      address: data?.[0]?.address || '',
+      oldResolvedAddress: resolvedAddress,
+      newResolvedAddress: data?.[0]?.address || '',
     };
   } catch (err) {
     throw new Error(`Resolving "${name}" error: ${convertError(err)}`);
@@ -28,13 +32,13 @@ const resolveHandleAddress = async (
 };
 
 const resolve = async (
-  names: string[]
-): Promise<Result<{ name: string; address: string }[], string>> => {
+  handles: Handle[]
+): Promise<Result<ResolvedHandle[], string>> => {
   const limit = pLimit(5);
   try {
     return Ok(
       await Promise.all(
-        names.map((name) => limit(() => resolveHandleAddress(name)))
+        handles.map((handle) => limit(() => resolveHandleAddress(handle)))
       )
     );
   } catch (err) {
