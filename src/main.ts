@@ -1,79 +1,93 @@
-import { LogCategory, Logger } from '@koralabs/kora-labs-common';
+import { asyncForEach, LogCategory, Logger } from '@koralabs/kora-labs-common';
 import { Ok, Result } from 'ts-res';
 import _ from 'lodash';
 
 import { Status } from './entrypoint.js';
-import { fetchHandles } from './handles.js';
+import { fetchAllHandleNames, fetchHandles } from './handles.js';
 import { Monitor } from './monitor.js';
-import resolve from './resolve.js';
+import { resolveHandles } from './resolve.js';
+
+/// Check if mismatched handle is within 3 blocks, then recheck
+
+const oneDayInMilliseconds = 86400000;
+const parallel = 5;
+
+const resolvePerPage = async (page: number): Promise<void> => {
+  const handlesDataResult = await fetchHandles(page, parallel);
+
+  if (!handlesDataResult.ok) {
+    Logger.log({
+      message: handlesDataResult.error,
+      category: LogCategory.ERROR,
+      event: 'HandleAddressResolver.fetchHandles',
+    });
+    return;
+  }
+
+  const handlesData = handlesDataResult.data;
+  const resolvedHandlesResult = await resolveHandles(handlesData);
+
+  if (!resolvedHandlesResult.ok) {
+    Logger.log({
+      message: resolvedHandlesResult.error,
+      category: LogCategory.ERROR,
+      event: 'HandleAddressResolver.resolveHandles',
+    });
+    return;
+  }
+
+  const resolvedHandles = resolvedHandlesResult.data;
+
+  resolvedHandles.forEach((resolvedHandle) => {
+    const { name, oldResolvedAddress, newResolvedAddress } = resolvedHandle;
+
+    if (oldResolvedAddress != newResolvedAddress) {
+      Logger.log({
+        message: `"${name}" resolved to new address.\nfrom: ${oldResolvedAddress}\nto: ${newResolvedAddress}`,
+        category: LogCategory.NOTIFY,
+        event: 'HandleAddressResolver.newResolvedAddress',
+      });
+    }
+  });
+};
 
 const main = async (): Promise<Result<Status, string>> => {
   const monitor = new Monitor();
-  const recordsPerPage = 150;
-  let currentPage = 1;
 
   /// resolve current page's handles
   while (!monitor.finished()) {
-    const handlesDataResult = await fetchHandles(currentPage, recordsPerPage);
-
-    if (!handlesDataResult.ok) {
+    /// fetch all handle names and calculate asyncEach time
+    const allHandleNamesResult = await fetchAllHandleNames();
+    if (!allHandleNamesResult.ok) {
       Logger.log({
-        message: handlesDataResult.error,
+        message: allHandleNamesResult.error,
         category: LogCategory.ERROR,
-        event: 'HandleAddressResolver.fetchHandles',
+        event: 'HandleAddressResolver.fetchAllHandleNames',
       });
 
       await monitor.sleep(10, 20);
       continue;
     }
 
-    const handlesData = handlesDataResult.data;
-    const chunked = _.chunk(handlesData, 3);
-    let currentIndex: number = 0;
-    const totalChunked = chunked.length;
+    const handlesTotalCount = allHandleNamesResult.data.length;
+    const asyncEachTime = Math.floor(
+      (oneDayInMilliseconds / Math.max(1, handlesTotalCount)) * parallel
+    );
+    const parallelCount = Math.ceil(handlesTotalCount / parallel);
 
-    /// resolve chunked handles
-    while (currentIndex < totalChunked) {
-      const handles = chunked[currentIndex];
-      const resolvedResult = await resolve(handles);
+    Logger.log({
+      message: `Resolve ${parallel} Handles every ${asyncEachTime} ms`,
+      category: LogCategory.INFO,
+      event: 'HandleAddressResolver.asyncEachTime',
+    });
 
-      if (!resolvedResult.ok) {
-        Logger.log({
-          message: resolvedResult.error,
-          category: LogCategory.ERROR,
-          event: 'HandleAddressResolver.resolve',
-        });
-      } else {
-        const resolvedHandles = resolvedResult.data;
-        resolvedHandles.forEach((resolvedHandle) => {
-          const { name, oldResolvedAddress, newResolvedAddress } =
-            resolvedHandle;
-
-          if (oldResolvedAddress != newResolvedAddress) {
-            Logger.log({
-              message: `"${name}" resolved to new address.\nfrom: ${oldResolvedAddress}\nto: ${newResolvedAddress}`,
-              category: LogCategory.NOTIFY,
-              event: 'HandleAddressResolver.newResolvedAddress',
-            });
-          } else {
-            Logger.log({
-              message: `"${name}" stay under same address`,
-              category: LogCategory.INFO,
-            });
-          }
-        });
-      }
-
-      currentIndex = currentIndex + 1;
-      await monitor.sleep(1, 2);
-    }
-
-    /// check if currentPage is last one
-    if (handlesData.length < recordsPerPage) {
-      currentPage = 0;
-    } else {
-      currentPage = currentPage + 1;
-    }
+    await asyncForEach(
+      Array.from({ length: parallelCount }),
+      async (_, index) => {
+        await resolvePerPage(index + 1);
+      },
+      asyncEachTime
+    );
   }
 
   return Ok(Status.Success);

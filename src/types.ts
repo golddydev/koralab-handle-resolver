@@ -1,3 +1,5 @@
+type Network = 'Mainnet' | 'Preprod' | 'Preview';
+
 interface Handle {
   name: string;
   hex: string;
@@ -11,4 +13,4 @@ interface ResolvedHandle {
   newResolvedAddress: string;
 }
 
-export type { Handle, ResolvedHandle };
+export type { Handle, Network, ResolvedHandle };

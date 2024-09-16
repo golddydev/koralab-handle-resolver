@@ -1,48 +1,44 @@
-import { BlockFrostAPI } from '@blockfrost/blockfrost-js';
 import { config } from 'dotenv';
-import pLimit from 'p-limit';
 import { Err, Ok, Result } from 'ts-res';
 
 import { convertError } from './error/index.js';
+import { KoiosProvider } from './koios.js';
 import { Handle, ResolvedHandle } from './types.js';
 
 config();
 
 const HANDLE_POLICY_ID =
   'f0ff48bbb7bbe9d59a40f1ce90e9e9d0ff5002ec48f232b49ca0fb9a';
-const blockfrostApiKey = process.env.BLOCKFROST_API_KEY;
-const API = new BlockFrostAPI({ projectId: blockfrostApiKey! });
+const koiosApiToken = process.env.KOIOS_API_TOKEN!;
 
-const resolveHandleAddress = async (
-  handle: Handle
-): Promise<ResolvedHandle> => {
-  const { name, hex, resolvedAddress } = handle;
-  try {
-    const data = await API.assetsAddresses(`${HANDLE_POLICY_ID}${hex}`);
-    return {
-      name,
-      hex,
-      oldResolvedAddress: resolvedAddress,
-      newResolvedAddress: data?.[0]?.address || '',
-    };
-  } catch (err) {
-    throw new Error(`Resolving "${name}" error: ${convertError(err)}`);
-  }
-};
+const koios = new KoiosProvider(koiosApiToken, 'Mainnet');
 
-const resolve = async (
+const resolveHandles = async (
   handles: Handle[]
 ): Promise<Result<ResolvedHandle[], string>> => {
-  const limit = pLimit(5);
   try {
-    return Ok(
-      await Promise.all(
-        handles.map((handle) => limit(() => resolveHandleAddress(handle)))
-      )
+    const assetUtxos = await koios.assetUTxOs(
+      handles.map((handle) => `${HANDLE_POLICY_ID}${handle.hex}`)
     );
+    const resolvedHandles = handles.map((handle): ResolvedHandle => {
+      const { name, hex, resolvedAddress } = handle;
+      const foundAssetUtxo = assetUtxos.find((utxo) =>
+        utxo.asset_list?.some(
+          (asset) =>
+            asset.policy_id == HANDLE_POLICY_ID && asset.asset_name == hex
+        )
+      );
+      return {
+        name,
+        hex,
+        oldResolvedAddress: resolvedAddress,
+        newResolvedAddress: foundAssetUtxo?.address || '',
+      };
+    });
+    return Ok(resolvedHandles);
   } catch (err) {
     return Err(convertError(err));
   }
 };
 
-export default resolve;
+export { resolveHandles };
