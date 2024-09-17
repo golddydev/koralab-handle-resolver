@@ -13,6 +13,33 @@ const koiosApiToken = process.env.KOIOS_API_TOKEN!;
 
 const koios = new KoiosProvider(koiosApiToken, 'Mainnet');
 
+const resolveHandle = async (
+  handle: Handle
+): Promise<Result<ResolvedHandle, string>> => {
+  try {
+    const assetUtxos = await koios.assetUTxOs([
+      `${HANDLE_POLICY_ID}${handle.hex}`,
+    ]);
+    const { name, hex, resolvedAddress } = handle;
+    const foundAssetUtxo = assetUtxos.find((utxo) =>
+      utxo.asset_list?.some(
+        (asset) =>
+          asset.policy_id == HANDLE_POLICY_ID && asset.asset_name == hex
+      )
+    );
+    return Ok({
+      name,
+      hex,
+      oldResolvedAddress: resolvedAddress,
+      newResolvedAddress: foundAssetUtxo?.address || '',
+      blockHeight: foundAssetUtxo?.block_height || 0,
+      blockTime: foundAssetUtxo?.block_time || Date.now(),
+    });
+  } catch (err) {
+    return Err(convertError(err));
+  }
+};
+
 const resolveHandles = async (
   handles: Handle[]
 ): Promise<Result<ResolvedHandle[], string>> => {
@@ -33,6 +60,8 @@ const resolveHandles = async (
         hex,
         oldResolvedAddress: resolvedAddress,
         newResolvedAddress: foundAssetUtxo?.address || '',
+        blockHeight: foundAssetUtxo?.block_height || 0,
+        blockTime: foundAssetUtxo?.block_time || Date.now(),
       };
     });
     return Ok(resolvedHandles);
@@ -41,4 +70,4 @@ const resolveHandles = async (
   }
 };
 
-export { resolveHandles };
+export { resolveHandle, resolveHandles };

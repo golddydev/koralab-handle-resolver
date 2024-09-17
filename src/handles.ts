@@ -31,6 +31,27 @@ const fetchAllHandleNames = async (): Promise<Result<string[], string>> => {
   }
 };
 
+const fetchHandle = async (
+  handleName: string
+): Promise<Result<Handle, string>> => {
+  const requestOptions: RequestInit = {
+    method: 'GET',
+  };
+
+  try {
+    const result = (await (
+      await fetch(`https://api.handle.me/handles/${handleName}`)
+    ).json()) as HandleInResponse;
+    return Ok({
+      name: result.name,
+      hex: result.hex,
+      resolvedAddress: result?.resolved_addresses?.ada || '',
+    });
+  } catch (err) {
+    return Err(convertError(err));
+  }
+};
+
 const fetchHandles = async (
   page: number = 1,
   recordsPerPage: number = 100
@@ -59,4 +80,4 @@ const fetchHandles = async (
   }
 };
 
-export { fetchAllHandleNames, fetchHandles };
+export { fetchAllHandleNames, fetchHandle, fetchHandles };

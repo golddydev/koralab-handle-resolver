@@ -3,14 +3,77 @@ import { Ok, Result } from 'ts-res';
 import _ from 'lodash';
 
 import { Status } from './entrypoint.js';
-import { fetchAllHandleNames, fetchHandles } from './handles.js';
+import { fetchAllHandleNames, fetchHandle, fetchHandles } from './handles.js';
 import { Monitor } from './monitor.js';
-import { resolveHandles } from './resolve.js';
+import { resolveHandle, resolveHandles } from './resolve.js';
+import { ResolvedHandle } from 'types.js';
 
-/// Check if mismatched handle is within 3 blocks, then recheck
-
+/// constants
 const oneDayInMilliseconds = 86400000;
 const parallel = 5;
+const thresholdTime = 60 * 1000; /// 60 seconds
+const checkQueueInterval = 5 * 1000; /// 30 seconds
+
+/// queue
+const queues: ResolvedHandle[] = [];
+
+const checkResolvedHandle = (resolvedHandle: ResolvedHandle) => {
+  const { name, oldResolvedAddress, newResolvedAddress, blockTime } =
+    resolvedHandle;
+
+  if (oldResolvedAddress != newResolvedAddress) {
+    if (Math.abs(Date.now() - blockTime) < thresholdTime) {
+      queues.push(resolvedHandle);
+      Logger.log({
+        message: `"${name}" resolved to new address within threshold. Pushed to queue`,
+        category: LogCategory.NOTIFY,
+        event: 'HandleAddressResolver.queueNewResolvedAddress',
+      });
+    } else {
+      Logger.log({
+        message: `"${name}" resolved to new address.\nfrom: ${oldResolvedAddress}\nto: ${newResolvedAddress}`,
+        category: LogCategory.NOTIFY,
+        event: 'HandleAddressResolver.newResolvedAddress',
+      });
+    }
+  }
+};
+
+const checkQueue = async () => {
+  if (queues.length > 0 && queues[0].blockTime + thresholdTime < Date.now()) {
+    const oldest = queues.shift();
+    if (!oldest) return;
+    const { name } = oldest;
+
+    /// fetch from db
+    const handleDataResult = await fetchHandle(name);
+    if (!handleDataResult.ok) {
+      Logger.log({
+        message: handleDataResult.error,
+        category: LogCategory.ERROR,
+        event: 'HandleAddressResolver.resolveHandleInQueue',
+      });
+      /// push at the end, when error occurs
+      queues.push(oldest);
+      return;
+    }
+
+    /// resolve on chain data (in case, handle resolved to new address within threshold)
+    const resolvedHandleResult = await resolveHandle(handleDataResult.data);
+    if (!resolvedHandleResult.ok) {
+      Logger.log({
+        message: resolvedHandleResult.error,
+        category: LogCategory.ERROR,
+        event: 'HandleAddressResolver.resolveHandleInQueue',
+      });
+      /// push at the end, when error occurs
+      queues.push(oldest);
+      return;
+    }
+
+    checkResolvedHandle(resolvedHandleResult.data);
+  }
+};
 
 const resolvePerPage = async (page: number): Promise<void> => {
   const handlesDataResult = await fetchHandles(page, parallel);
@@ -38,21 +101,14 @@ const resolvePerPage = async (page: number): Promise<void> => {
 
   const resolvedHandles = resolvedHandlesResult.data;
 
-  resolvedHandles.forEach((resolvedHandle) => {
-    const { name, oldResolvedAddress, newResolvedAddress } = resolvedHandle;
-
-    if (oldResolvedAddress != newResolvedAddress) {
-      Logger.log({
-        message: `"${name}" resolved to new address.\nfrom: ${oldResolvedAddress}\nto: ${newResolvedAddress}`,
-        category: LogCategory.NOTIFY,
-        event: 'HandleAddressResolver.newResolvedAddress',
-      });
-    }
-  });
+  resolvedHandles.forEach(checkResolvedHandle);
 };
 
 const main = async (): Promise<Result<Status, string>> => {
   const monitor = new Monitor();
+
+  /// check queue every interval
+  setInterval(checkQueue, checkQueueInterval);
 
   /// resolve current page's handles
   while (!monitor.finished()) {
